@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: blog-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: blog
+  template:
+    metadata:
+      labels:
+        app: blog
+    spec:
+      containers:
+      - name: blog-container
+        image: blogservice:latest  # 使用本地镜像
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 8081
+        resources:
+          requests:
+            memory: "256Mi"   # 请求的最低内存
+            cpu: "500m"       # 请求的最低 CPU
+          limits:
+            memory: "512Mi"   # 最大内存限制
+            cpu: "1"          # 最大 CPU 限制
+        env:
+        - name: SPRING_PROFILES_ACTIVE
+          value: docker
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: blog-service
+spec:
+  selector:
+    app: blog
+  ports:
+    - protocol: TCP
+      port: 8081
+      targetPort: 8081
+      nodePort: 30081  # 设置 NodePort 外部端口
+  type: NodePort  # 设置为 NodePort 以暴露服务

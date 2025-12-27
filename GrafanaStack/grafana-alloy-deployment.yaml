@@ -1,0 +1,113 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana-alloy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana-alloy
+  template:
+    metadata:
+      labels:
+        app: grafana-alloy
+    spec:
+      volumes:
+        - name: logs-volume
+          hostPath:
+            path: /mnt/data  # 直接掛載 Minikube VM 的日誌目錄
+            type: DirectoryOrCreate  # 如果目錄不存在，則自動建立
+        - name: alloy-config
+          configMap:
+            name: alloy-config
+        - name: alloy-data
+          emptyDir: {}
+      containers:
+        - name: grafana-alloy
+          image: grafana/alloy:latest
+          args:
+            - run
+            - /etc/alloy/config.river
+          volumeMounts:
+            - name: logs-volume
+              mountPath: /mnt/data  # 確保 Alloy 能讀取日誌
+            - name: alloy-config
+              mountPath: /etc/alloy
+              readOnly: true
+            - name: alloy-data
+              mountPath: /data
+          ports:
+            - name: http-server
+              containerPort: 3200
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "300m"
+              memory: "256Mi"
+
+---
+# Grafana Alloy ConfigMap (修改 Alloy 讀取的日誌路徑)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alloy-config
+data:
+  config.river: |
+    local.file_match "all_logs" {
+        path_targets = [
+            {"__path__" = "/mnt/data/blogLogCollection/*.log", "service" = "blog"},
+            {"__path__" = "/mnt/data/UserLogCollection/*.log", "service" = "user"},
+            {"__path__" = "/mnt/data/GateWayLogCollection/*.log", "service" = "gateway"},
+        ]
+    }
+
+    loki.source.file "log_files" {
+        targets    = local.file_match.all_logs.targets
+        forward_to = [loki.process.log_processor.receiver]
+    }
+
+    loki.process "log_processor" {
+        stage.logfmt {
+            mapping = {
+                "extracted_level" = "level",
+            }
+        }
+        stage.labels {
+            values = {
+                "level" = "extracted_level",
+                "service" = "",
+            }
+        }
+        stage.static_labels {
+            values = {
+                "env" = "development",
+            }
+        }
+        forward_to = [loki.write.http.receiver]
+    }
+
+    loki.write "http" {
+        endpoint {
+            url = "http://loki:3100/loki/api/v1/push"
+            tenant_id = "local"
+        }
+    }
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana-alloy-service
+spec:
+  selector:
+    app: grafana-alloy
+  ports:
+    - protocol: TCP
+      port: 3200
+      targetPort: 3200
+  type: ClusterIP
+
+
+  

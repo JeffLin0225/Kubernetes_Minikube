@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loki
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: loki
+  template:
+    metadata:
+      labels:
+        app: loki
+    spec:
+      containers:
+      - name: loki
+        image: grafana/loki:latest
+        ports:
+        - containerPort: 3100
+        args:
+        - -config.file=/etc/loki/config.yaml
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "500m"
+            memory: "1Gi"
+        volumeMounts:
+        - name: loki-storage
+          mountPath: /loki  # ✅ 存储目录
+        - name: loki-config
+          mountPath: /etc/loki
+      volumes:
+      - name: loki-storage
+        emptyDir: {}  # ✅ 使用 Minikube 内存存储（重启后数据会丢失）
+      - name: loki-config
+        configMap:
+          name: loki-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loki-config
+data:
+  config.yaml: |
+    auth_enabled: false
+
+    server:
+      http_listen_port: 3100
+
+    ingester:
+      lifecycler:
+        address: 127.0.0.1
+        ring:
+          kvstore:
+            store: inmemory
+          replication_factor: 1
+        final_sleep: 0s
+      chunk_idle_period: 3m
+      chunk_retain_period: 1m
+
+    schema_config:
+      configs:
+      - from: 2025-02-26
+        store: tsdb  # ✅ tsdb 索引存储
+        object_store: filesystem  # ✅ 本地存储
+        schema: v13  # ✅ 升级到 v13
+        index:
+          prefix: index_
+          period: 24h
+
+    storage_config:
+      tsdb_shipper:
+        active_index_directory: /loki/tsdb-index
+        cache_location: /loki/tsdb-cache
+        shared_store: filesystem  # ✅ 使用本地存储
+      filesystem:
+        directory: /loki/chunks  # ✅ 本地存储路径
+
+    limits_config:
+      allow_structured_metadata: true  # ✅ 允许结构化元数据
+      reject_old_samples: true
+      reject_old_samples_max_age: 168h
+
+    table_manager:
+      retention_deletes_enabled: true
+      retention_period: 336h
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: loki
+spec:
+  ports:
+  - port: 3100
+    targetPort: 3100
+  selector:
+    app: loki

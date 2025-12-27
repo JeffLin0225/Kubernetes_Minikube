@@ -1,0 +1,107 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loki-config
+data:
+  loki.yaml: |
+    auth_enabled: false
+
+    server:
+      http_listen_port: 3100
+
+    ingester:
+      lifecycler:
+        address: 127.0.0.1
+        ring:
+          kvstore:
+            store: inmemory
+          replication_factor: 1
+      chunk_idle_period: 5m
+      chunk_retain_period: 30s
+
+    schema_config:
+      configs:
+        - from: 2023-01-01
+          store: tsdb
+          object_store: filesystem
+          schema: v13
+          index:
+            prefix: index_
+            period: 24h
+
+    storage_config:
+      tsdb_shipper:
+        active_index_directory: /data/loki/index
+        cache_location: /data/loki/index_cache
+        cache_ttl: 24h
+      filesystem:
+        directory: /data/loki/chunks
+
+    limits_config:
+      allow_structured_metadata: false
+      reject_old_samples: true
+      reject_old_samples_max_age: 168h
+
+    compactor:
+      working_directory: /data/loki/compactor
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loki
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: loki
+  template:
+    metadata:
+      labels:
+        app: loki
+    spec:
+      containers:
+        - name: loki
+          image: grafana/loki:latest
+          securityContext:
+            runAsUser: 0   # 以 root 运行
+            runAsGroup: 0
+            privileged: true
+          ports:
+            - containerPort: 3100
+              name: http-metrics
+          volumeMounts:
+            - name: config
+              mountPath: /etc/loki
+            - name: data
+              mountPath: /data
+            - name: wal
+              mountPath: /wal  # 解决 WAL 权限问题
+          args:
+            - -config.file=/etc/loki/loki.yaml
+          resources:
+            requests:
+              cpu: "500m"      # 最少 500m CPU
+              memory: "512Mi"  # 最少 512Mi 記憶體
+            limits:
+              cpu: "2"         # 最多 2 個 CPU
+              memory: "2Gi"    # 最多 2Gi 記憶體
+      volumes:
+        - name: config
+          configMap:
+            name: loki-config
+        - name: data
+          emptyDir: {}
+        - name: wal
+          emptyDir: {}  # 让 WAL 有可写目录
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: loki
+spec:
+  ports:
+    - port: 3100
+      protocol: TCP
+      targetPort: http-metrics
+  selector:
+    app: loki
